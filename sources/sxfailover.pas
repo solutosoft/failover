@@ -275,7 +275,6 @@ var
   ATCPClient: TIdTCPClient;
   AServer: TsxFailoverTCP;
 begin
-  //nao chamar a derivada está tudo implementado aqui
   //inherited;
 
   AAttempt := 0;
@@ -303,12 +302,12 @@ begin
       begin
         Inc(AAttempt);
         if (AAttempt = MaxReconnectAttempts) then
-        begin
-          Connection.Disconnect;
-          DoException(EsxMappedAttemptException.Create(E.Message));
-        end
+          DoException(EsxMappedAttemptException.Create(E.Message))
         else
           DoException(E);
+
+        Connection.Disconnect;
+        raise;
       end;
     end;
   end;
