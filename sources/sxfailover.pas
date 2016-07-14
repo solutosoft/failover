@@ -3,7 +3,7 @@ unit sxfailover;
 interface
 
 uses
-  Windows, Classes, SysUtils, {$IFDEF FPC}fgl{$ELSE}Generics.Collections{$ENDIF}, ShellApi,
+  Windows, Classes, SysUtils, {$IFDEF FPC}fgl{$ELSE}Generics.Collections{$ENDIF}, ShellApi, StrUtils,
   IdMappedPortTCP, IdTCPClient, IdContext, IdStack, IdTCPConnection, IdYarn, IdGlobal, IdIOHandlerSocket, IdComponent,
   IdIOHandler, DateUtils, SyncObjs, IdSocketHandle,
   JclSvcCtrl, JclSysInfo;
@@ -11,7 +11,13 @@ uses
 type
   TsxServerItem = class;
 
-  EsxMappedAttemptException = class(Exception);
+  EsxMappedAttemptException = class(Exception)
+  private
+    FOriginal: Exception;
+  public
+    constructor Create(AOriginal: Exception);
+    property Original: Exception read FOriginal;
+  end;
 
   TsxServerStatus = (sesActive, sesInactive, sesRestarting);
   TsxVerifyServerEvent = procedure(AConf: TsxServerItem; var AActive: Boolean) of object;
@@ -302,7 +308,7 @@ begin
       begin
         Inc(AAttempt);
         if (AAttempt = MaxReconnectAttempts) then
-          DoException(EsxMappedAttemptException.Create(E.Message))
+          DoException(EsxMappedAttemptException.Create(E))
         else
           DoException(E);
 
@@ -387,6 +393,14 @@ begin
     Add((AContext.Connection.IOHandler as TIdIOHandlerSocket).Binding.Handle);
     Add((TIdMappedPortContextAccess(AContext).FOutboundClient.IOHandler as TIdIOHandlerSocket).Binding.Handle);
   end;
+end;
+
+{ EsxMappedAttemptException }
+
+constructor EsxMappedAttemptException.Create(AOriginal: Exception);
+begin
+  inherited Create(AOriginal.Message);
+  FOriginal := AOriginal;
 end;
 
 end.
