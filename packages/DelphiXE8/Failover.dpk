@@ -33,7 +33,10 @@ requires
   Jcl,
   IndySystem,
   IndyProtocols,
-  IndyCore;
+  IndyCore,
+  CustomIPTransport,
+  IndyIPClient,
+  IndyIPCommon;
 
 contains
   sxfailover in '..\..\sources\sxfailover.pas',

@@ -1,11 +1,11 @@
-unit sxfailover;
+unit sxFailover;
 
 interface
 
 uses
-  Windows, Classes, SysUtils, {$IFDEF FPC}fgl{$ELSE}Generics.Collections{$ENDIF}, ShellApi, StrUtils,
+  Windows, Classes, SysUtils, ShellApi, Generics.Collections,
   IdMappedPortTCP, IdTCPClient, IdContext, IdStack, IdTCPConnection, IdYarn, IdGlobal, IdIOHandlerSocket, IdComponent,
-  IdIOHandler, DateUtils, SyncObjs, IdSocketHandle,
+  IdIOHandler, DateUtils, SyncObjs, IdSocketHandle, IndyPeerImpl,
   JclSvcCtrl, JclSysInfo;
 
 type
@@ -20,7 +20,8 @@ type
   end;
 
   TsxServerStatus = (sesActive, sesInactive, sesRestarting);
-  TsxVerifyServerEvent = procedure(AConf: TsxServerItem; var AActive: Boolean) of object;
+  TsxVerifyServerEvent = procedure(AItem: TsxServerItem; var AActive: Boolean) of object;
+  TsxRestartApplicationEvent = procedure(AItem: TsxServerItem) of object;
 
   TsxServerItem = class(TCollectionItem)
   private
@@ -65,21 +66,24 @@ type
     FWaitTime: Integer;
     FServers: TsxServerList;
     FOnVerify: TsxVerifyServerEvent;
-    procedure DoVerify(AConf: TsxServerItem; var AActive: Boolean);
+    FOnRestart: TsxRestartApplicationEvent;
+    procedure DoVerify(AItem: TsxServerItem; var AActive: Boolean);
+    procedure DoRestart(AItem: TsxServerItem);
   protected
     procedure Execute; override;
   public
     constructor Create(AServers: TsxServerList; AWaitTime: Integer);
     property OnVerify: TsxVerifyServerEvent read FOnVerify write FOnVerify;
+    property OnRestart: TsxRestartApplicationEvent read FOnRestart write FOnRestart;
   end;
 
-  TsxRestartApplication = class(TThread)
+  TpxRestartApplicationThread = class(TThread)
   private
     FConf: TsxServerItem;
     procedure RestartProccess;
     procedure RestartService;
   protected
-    constructor Create(AConf: TsxServerItem);
+    constructor Create(AItem: TsxServerItem);
     procedure Execute; override;
   end;
 
@@ -89,6 +93,7 @@ type
     FOnVerifyServer: TsxVerifyServerEvent;
     FVerifyServer: TsxVerifyServerThread;
     FVerifyWaitTime: Integer;
+    FOnRestartApplication: TsxRestartApplicationEvent;
     procedure SetServers(const Value: TsxServerList);
   protected
     procedure DoConnect(AContext: TIdContext); override;
@@ -99,8 +104,9 @@ type
     destructor Destroy; override;
   published
     property Servers: TsxServerList read FServers write SetServers;
-    property OnVerifyServer: TsxVerifyServerEvent read FOnVerifyServer write FOnVerifyServer;
     property VerifyWaitTime: Integer read FVerifyWaitTime write FVerifyWaitTime default 5000;
+    property OnRestartApplication: TsxRestartApplicationEvent read FOnRestartApplication write FOnRestartApplication;
+    property OnVerifyServer: TsxVerifyServerEvent read FOnVerifyServer write FOnVerifyServer;
   end;
 
 implementation
@@ -115,17 +121,23 @@ begin
   FWaitTime := AWaitTime;
 end;
 
-procedure TsxVerifyServerThread.DoVerify(AConf: TsxServerItem;var AActive: Boolean);
+procedure TsxVerifyServerThread.DoRestart(AItem: TsxServerItem);
+begin
+  if (Assigned(FOnRestart)) then
+    FOnRestart(AItem);
+end;
+
+procedure TsxVerifyServerThread.DoVerify(AItem: TsxServerItem;var AActive: Boolean);
 begin
   if Assigned(FOnVerify) then
-    FOnVerify(AConf, AActive);
+    FOnVerify(AItem, AActive);
 end;
 
 procedure TsxVerifyServerThread.Execute;
 var
   I: Integer;
-  AConf: TsxServerItem;
-  ARestart: TsxRestartApplication;
+  AItem: TsxServerItem;
+  ARestart: TpxRestartApplicationThread;
   AActive: Boolean;
 begin
   inherited;
@@ -133,30 +145,31 @@ begin
   begin
     for I := 0 to FServers.Count -1 do
     begin
-      AConf := FServers[I];
+      AItem := FServers[I];
 
       if (Self.Terminated) then
         Exit;
 
       AActive := False;
-      DoVerify(AConf, AActive);
+      DoVerify(AItem, AActive);
 
       if (AActive) then
       begin
         TThread.Synchronize(nil, procedure
         begin
-          AConf.Status := sesActive;
+          AItem.Status := sesActive;
         end);
       end
       else begin
-        if (AConf.Status <> sesRestarting) then
+        if (AItem.Status <> sesRestarting) then
         begin
           TThread.Synchronize(nil, procedure
           begin
-            AConf.Status := sesRestarting;
+            AItem.Status := sesRestarting;
           end);
 
-          ARestart := TsxRestartApplication.Create(AConf);
+          DoRestart(AItem);
+          ARestart := TpxRestartApplicationThread.Create(AItem);
           ARestart.Start;
         end;
       end;
@@ -165,16 +178,16 @@ begin
   end;
 end;
 
-{ TsxRestartApplication }
+{ TpxRestartApplicationThread }
 
-constructor TsxRestartApplication.Create(AConf: TsxServerItem);
+constructor TpxRestartApplicationThread.Create(AItem: TsxServerItem);
 begin
   inherited Create(True);
   FreeOnTerminate := True;
-  FConf := AConf;
+  FConf := AItem;
 end;
 
-procedure TsxRestartApplication.RestartProccess;
+procedure TpxRestartApplicationThread.RestartProccess;
 var
   APid: THandle;
 begin
@@ -193,7 +206,7 @@ begin
   end;
 end;
 
-procedure TsxRestartApplication.RestartService;
+procedure TpxRestartApplicationThread.RestartService;
 const
   WaitService = 3000;
 begin
@@ -204,7 +217,7 @@ begin
   Sleep(WaitService);
 end;
 
-procedure TsxRestartApplication.Execute;
+procedure TpxRestartApplicationThread.Execute;
 begin
   if (FConf.Service) then
     RestartService
@@ -365,6 +378,7 @@ begin
   inherited Startup;
   FVerifyServer := TsxVerifyServerThread.Create(FServers, FVerifyWaitTime);
   FVerifyServer.OnVerify := FOnVerifyServer;
+  FVerifyServer.OnRestart := FOnRestartApplication;
   FVerifyServer.Start;
 end;
 
