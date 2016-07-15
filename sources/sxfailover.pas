@@ -307,13 +307,16 @@ begin
       on E: Exception do
       begin
         Inc(AAttempt);
-        if (AAttempt = MaxReconnectAttempts) then
-          DoException(EsxMappedAttemptException.Create(E))
-        else
+        if (AAttempt < MaxReconnectAttempts) then
+        begin
           DoException(E);
-
-        Connection.Disconnect;
-        raise;
+          Connection.Disconnect;
+        end
+        else begin
+          DoException(EsxMappedAttemptException.Create(E));
+          Connection.Disconnect;
+          raise;
+        end;
       end;
     end;
   end;
